@@ -69,25 +69,18 @@ export function buildSopKnowledgeModel(extracted: ExtractedDocument): SopKnowled
   const rawText = extracted.rawText;
   const lowerText = rawText.toLowerCase();
 
-  let role = 'Workplace Professional';
+  let role = 'Workplace Operator';
   let process = extracted.filename.replace(/\.(txt|pdf|docx)$/i, '');
-  let department = 'Operations';
+  let department = '';
 
-  if (lowerText.includes('housekeeping') || lowerText.includes('cleaning') || lowerText.includes('residential') || lowerText.includes('janitorial')) {
-    role = 'Housekeeping Attendant';
-    department = 'Housekeeping';
-  } else if (lowerText.includes('warehouse') || lowerText.includes('inventory') || lowerText.includes('stock') || lowerText.includes('picker')) {
-    role = 'Warehouse Associate';
-    department = 'Logistics';
-  } else if (lowerText.includes('safety') || lowerText.includes('hazard') || lowerText.includes('ppe')) {
-    role = 'Safety Inspector';
-    department = 'EHS';
-  } else if (lowerText.includes('posh') || lowerText.includes('sexual harassment') || lowerText.includes('workplace conduct') || lowerText.includes('hr compliance') || lowerText.includes('internal committee')) {
-    role = 'Workplace Professional';
-    department = 'HR & Compliance';
-  } else if (lowerText.includes('front office') || lowerText.includes('guest') || lowerText.includes('orchid suite') || lowerText.includes('hotel')) {
-    role = 'Front Office Associate';
-    department = 'Hospitality';
+  const roleMatch = rawText.match(/\b(?:role|position|title|for):\s*([^\n\r.]+)/i);
+  if (roleMatch && roleMatch[1].trim().length > 2) {
+    role = roleMatch[1].trim();
+  }
+
+  const deptMatch = rawText.match(/\b(?:department|dept|unit):\s*([^\n\r.]+)/i);
+  if (deptMatch && deptMatch[1].trim().length > 2) {
+    department = deptMatch[1].trim();
   }
 
   const rawLines = rawText
@@ -98,7 +91,7 @@ export function buildSopKnowledgeModel(extracted: ExtractedDocument): SopKnowled
   const stepsList: SopKnowledgeModel['steps'] = [];
   let currentSection = 'Main Execution';
 
-  rawLines.forEach((line, idx) => {
+  rawLines.forEach((line) => {
     if (line.match(/^(section|chapter|part)\s+\d+/i) || (line.length < 50 && line.endsWith(':') && !line.includes(' '))) {
       currentSection = line.replace(/[:\#]/g, '').trim();
     } else if (isOperationalContent(line, extracted.filename)) {
@@ -135,7 +128,7 @@ export function buildSopKnowledgeModel(extracted: ExtractedDocument): SopKnowled
     }));
 
   const exceptions: SopKnowledgeModel['exceptions'] = stepsList
-    .filter((s) => s.action.toLowerCase().includes('reject') || s.action.toLowerCase().includes('discard') || s.action.toLowerCase().includes('fail'))
+    .filter((s) => s.action.toLowerCase().includes('reject') || s.action.toLowerCase().includes('discard') || s.action.toLowerCase().includes('fail') || s.action.toLowerCase().includes('exceeds'))
     .map((s) => ({
       situation: `Quality or compliance anomaly: ${s.action.slice(0, 60)}`,
       response: s.action,
@@ -143,26 +136,55 @@ export function buildSopKnowledgeModel(extracted: ExtractedDocument): SopKnowled
     }));
 
   const escalations: SopKnowledgeModel['escalations'] = stepsList
-    .filter((s) => s.action.toLowerCase().includes('escalate') || s.action.toLowerCase().includes('notify') || s.action.toLowerCase().includes('contact'))
+    .filter((s) => s.action.toLowerCase().includes('escalate') || s.action.toLowerCase().includes('notify') || s.action.toLowerCase().includes('contact') || s.action.toLowerCase().includes('report'))
     .map((s) => ({
       trigger: `Unresolved issue or anomaly during ${process}`,
       action: s.action,
-      escalationTarget: 'Designated Floor Supervisor or Department Lead',
+      escalationTarget: s.action.match(/(?:notify|contact|escalate to|report to)\s+([A-Za-z0-9\s\-_]+)/i)?.[1]?.trim() || 'Designated Lead in Source',
       sourceEvidence: s.sourceEvidence,
     }));
 
-  if (escalations.length === 0) {
-    escalations.push({
-      trigger: `Unresolved discrepancy or compliance issue during ${process}`,
-      action: `Pause task and notify immediate supervisor before proceeding.`,
-      escalationTarget: 'Floor Supervisor',
-      sourceEvidence: stepsList[0]?.sourceEvidence || 'Escalate issues to supervisor.',
-    });
-  }
-
   const criticalControls = stepsList
-    .filter((s) => s.action.toLowerCase().includes('must') || s.action.toLowerCase().includes('never') || s.action.toLowerCase().includes('verify'))
+    .filter((s) => s.action.toLowerCase().includes('must') || s.action.toLowerCase().includes('never') || s.action.toLowerCase().includes('verify') || s.action.toLowerCase().includes('critical control'))
     .map((s) => s.action);
+
+  // Extract tools explicitly from source text if available
+  const toolsFound: SopKnowledgeModel['tools'] = [];
+  const toolKeywords = ['thermometer', 'data logger', 'terminal', 'scanner', 'ppe', 'gloves', 'jacket', 'boots'];
+  toolKeywords.forEach((kw) => {
+    const matchingLine = rawLines.find((l) => l.toLowerCase().includes(kw));
+    if (matchingLine) {
+      toolsFound.push({
+        name: kw.toUpperCase(),
+        purpose: matchingLine.trim(),
+        neverDo: '',
+        sourceEvidence: matchingLine.trim(),
+      });
+    }
+  });
+
+  // Extract prerequisites explicitly from source text if available
+  const prereqsFound: SopKnowledgeModel['prerequisites'] = [];
+  const prereqLines = rawLines.filter((l) => 
+    !l.match(/^(section|chapter|part)\s+\d+/i) &&
+    (l.toLowerCase().includes('prerequisite') || l.toLowerCase().includes('qualification') || l.toLowerCase().includes('pre-entry') || l.toLowerCase().includes('before entering') || l.toLowerCase().includes('prior to entering') || l.toLowerCase().includes('preparation'))
+  );
+  prereqLines.forEach((pl) => {
+    prereqsFound.push({
+      text: pl.trim(),
+      sourceEvidence: pl.trim(),
+    });
+  });
+
+  // Common mistakes explicitly from source text
+  const mistakesFound = rawLines
+    .filter((l) => l.toLowerCase().includes('never') || l.toLowerCase().includes('do not') || l.toLowerCase().includes('avoid'))
+    .map((l) => l.trim());
+
+  let confidenceScore = 1.0;
+  if (escalations.length === 0) confidenceScore -= 0.1;
+  if (prereqsFound.length === 0) confidenceScore -= 0.05;
+  if (toolsFound.length === 0) confidenceScore -= 0.05;
 
   return {
     document: {
@@ -175,53 +197,32 @@ export function buildSopKnowledgeModel(extracted: ExtractedDocument): SopKnowled
     identity: {
       title: process,
       organization: 'Frontline Organization',
-      department,
+      department: department || 'Operations',
       role,
       process,
     },
-    purpose: stepsList[0]?.action ? `Perform ${process} safely and accurately.` : `Standard procedure for ${role}.`,
-    scope: `${department} workspace`,
-    whyItMatters: criticalControls[0] || `Maintains service quality, guest/customer safety, and operational compliance.`,
-    prerequisites: [
-      {
-        text: `Check workstation, tools, and written SOP guide before starting.`,
-        sourceEvidence: stepsList[0]?.sourceEvidence || 'Prerequisite preparation',
-      },
-    ],
-    tools: [
-      {
-        name: `${role} Workstation & Tools`,
-        purpose: `Primary operational equipment for ${process}`,
-        neverDo: `Never bypass safety checks or execute without required verification.`,
-        sourceEvidence: stepsList[0]?.sourceEvidence || 'Workstation setup',
-      },
-    ],
-    systems: [
-      {
-        name: `${department} POS / LIMS / Management System`,
-        purpose: `Record and confirm operational transactions`,
-        sourceEvidence: stepsList[0]?.sourceEvidence || 'System entry',
-      },
-    ],
+    purpose: stepsList[0]?.action ? `Perform ${process} accurately.` : `Standard procedure for ${role}.`,
+    scope: department ? `${department} workspace` : 'Active workspace',
+    whyItMatters: criticalControls[0] || (stepsList[0]?.action ? `Adhere to written SOP: ${stepsList[0].action}` : 'Maintains operational compliance.'),
+    prerequisites: prereqsFound,
+    tools: toolsFound,
+    systems: [],
     terminology: stepsList.slice(0, 3).map((s) => ({
       term: s.action.split(' ').slice(0, 3).join(' '),
       meaning: s.action,
       sourceEvidence: s.sourceEvidence,
     })),
-    steps: stepsList.slice(0, 8),
+    steps: stepsList,
     decisionPoints,
     exceptions,
     escalations,
-    criticalControls: criticalControls.slice(0, 4),
-    safetyRules: criticalControls.slice(0, 3),
-    qualityRules: stepsList.slice(0, 3).map((s) => s.action),
-    commonMistakes: [
-      `Skipping required identity or detail check before executing task.`,
-      `Proceeding when an anomaly is detected without notifying supervisor.`,
-    ],
-    customerImpact: `Directly influences customer/patient satisfaction, safety, and service accuracy.`,
-    businessImpact: `Ensures compliance, prevents costly errors, and maintains operational standards.`,
-    confidence: 0.98,
+    criticalControls,
+    safetyRules: criticalControls.filter((c) => c.toLowerCase().includes('safe') || c.toLowerCase().includes('hazard') || c.toLowerCase().includes('ppe') || c.toLowerCase().includes('never')),
+    qualityRules: stepsList.map((s) => s.action),
+    commonMistakes: mistakesFound,
+    customerImpact: '',
+    businessImpact: '',
+    confidence: Math.max(0.5, confidenceScore),
   };
 }
 
@@ -486,7 +487,7 @@ export function generateLessonFromOperationalBlueprint(
   });
 
   const steps = validSteps.length > 0
-    ? validSteps.slice(0, 9)
+    ? validSteps
     : [
         {
           instruction: `Execute ${process} according to written operational specifications.`,

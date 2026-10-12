@@ -10,7 +10,7 @@ export const TeachStepPage: React.FC<{
   const stepLabel = (slide.step || 'LEARN - STEP 1 OF 5').toUpperCase();
   const whatToDo = slide.content || slide.items?.[0] || "Follow the property's approved identity and registration requirements.";
   const whyItMatters = slide.gurujiCoaching?.whyItMatters || slide.why || 'Ensures safety, compliance and prevents unauthorized access.';
-  const criticalControl = slide.gurujiCoaching?.criticalControl || slide.criticalControl || 'Must be complete and verified before proceeding.';
+  const criticalControl = (slide.gurujiCoaching as any)?.criticalControl || (slide as any).criticalControl || 'Must be complete and verified before proceeding.';
 
   return (
     <div className="flex flex-col gap-4 text-left">

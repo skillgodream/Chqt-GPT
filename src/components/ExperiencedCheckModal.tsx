@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { X, Check, AlertTriangle, ShieldCheck, ArrowRight, UserCheck } from 'lucide-react';
 import { EXPERIENCED_CHECK_QUESTIONS } from '../data/lessonsData';
+import { Lesson } from '../types';
 import { sounds } from '../utils/audio';
 
 interface ExperiencedCheckModalProps {
   isOpen: boolean;
+  lesson?: Lesson | null;
   onClose: () => void;
   onPass: () => void;
   onFail: () => void;
@@ -13,29 +15,74 @@ interface ExperiencedCheckModalProps {
 
 export default function ExperiencedCheckModal({
   isOpen,
+  lesson,
   onClose,
   onPass,
   onFail,
   onAskTrainer,
 }: ExperiencedCheckModalProps) {
   const [currentQIndex, setCurrentQIndex] = useState(0);
-  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
-  const [correctCount, setCorrectCount] = useState(0);
+  const [userAnswers, setUserAnswers] = useState<Record<number, { optionId: string; isCorrect: boolean }>>({});
   const [isFinished, setIsFinished] = useState(false);
-  const [showSafetyCard, setShowSafetyCard] = useState(false);
+
+  const questions = useMemo(() => {
+    if (!lesson) return EXPERIENCED_CHECK_QUESTIONS;
+    const bpSteps = lesson.operationalBlueprint?.operational_steps || [];
+    const sos = lesson.stepObjects || [];
+    
+    const extracted: Array<{ id: number; question: string; options: { id: string; text: string; isCorrect: boolean }[]; explanation: string }> = [];
+
+    if (bpSteps.length > 0) {
+      bpSteps.forEach((s, idx) => {
+        if (s.scenario_question && s.choices && s.choices.length >= 2 && s.choices.some(c => c.isCorrect)) {
+          extracted.push({
+            id: idx + 1,
+            question: s.scenario_question,
+            options: s.choices.map((c, cIdx) => ({ id: c.id || `c${cIdx + 1}`, text: c.title || (c as any).text, isCorrect: Boolean(c.isCorrect) })),
+            explanation: s.why_it_matters || s.coach_tip || 'Compliant SOP Standard',
+          });
+        }
+      });
+    }
+
+    if (extracted.length === 0 && sos.length > 0) {
+      sos.forEach((so: any, idx: number) => {
+        if (so.options && so.options.length >= 2) {
+          const choices = so.options.map((opt: any, oIdx: number) => ({
+            id: opt.id || `c${oIdx + 1}`,
+            text: opt.label || opt.text,
+            isCorrect: Boolean((so.correct && opt.id === so.correct) || opt.isCorrect === true),
+          }));
+          if (choices.some((c: any) => c.isCorrect)) {
+            extracted.push({
+              id: idx + 1,
+              question: so.question || `How do you execute step ${idx + 1}: ${so.title}?`,
+              options: choices,
+              explanation: so.why || so.coach_say || 'Compliant SOP Standard',
+            });
+          }
+        }
+      });
+    }
+
+    return extracted.length > 0 ? extracted : EXPERIENCED_CHECK_QUESTIONS;
+  }, [lesson]);
 
   if (!isOpen) return null;
 
-  const currentQ = EXPERIENCED_CHECK_QUESTIONS[currentQIndex];
-  const totalQuestions = EXPERIENCED_CHECK_QUESTIONS.length;
+  const currentQ = questions[currentQIndex] || questions[0];
+  const totalQuestions = questions.length;
+  const currentSelection = userAnswers[currentQIndex];
 
   const handleSelectOption = (optionId: string, isCorrect: boolean) => {
-    if (selectedOptionId) return;
-    setSelectedOptionId(optionId);
+    if (userAnswers[currentQIndex]) return;
+    setUserAnswers((prev) => ({
+      ...prev,
+      [currentQIndex]: { optionId, isCorrect },
+    }));
 
     if (isCorrect) {
       sounds.playCorrect();
-      setCorrectCount((prev) => prev + 1);
     } else {
       sounds.playWrong();
     }
@@ -45,28 +92,23 @@ export default function ExperiencedCheckModal({
     sounds.playTap();
     if (currentQIndex < totalQuestions - 1) {
       setCurrentQIndex((prev) => prev + 1);
-      setSelectedOptionId(null);
     } else {
       setIsFinished(true);
-      const score = Math.round(((correctCount + (selectedOptionId && currentQ.options.find(o => o.id === selectedOptionId)?.isCorrect ? 1 : 0)) / totalQuestions) * 100);
-      if (score >= 75) {
-        setShowSafetyCard(true);
-      }
     }
   };
 
   const handleReset = () => {
     setCurrentQIndex(0);
-    setSelectedOptionId(null);
-    setCorrectCount(0);
+    setUserAnswers({});
     setIsFinished(false);
-    setShowSafetyCard(false);
   };
 
   // Assessment Complete Result Screen
   if (isFinished) {
-    const finalScore = Math.round((correctCount / totalQuestions) * 100);
-    const passed = finalScore >= 75;
+    const totalAnswered = Object.keys(userAnswers).length;
+    const correctAnswersCount = Object.values(userAnswers).filter((a) => a.isCorrect).length;
+    const finalScore = totalQuestions > 0 ? Math.round((correctAnswersCount / totalQuestions) * 100) : 0;
+    const passed = finalScore >= 75 && totalAnswered === totalQuestions;
 
     return (
       <div className="fixed inset-0 z-50 bg-[#07090E]/85 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
@@ -92,7 +134,7 @@ export default function ExperiencedCheckModal({
                 <Check size={32} />
               </div>
               <div>
-                <h3 className="text-xl font-bold text-white">Check Passed ({correctCount}/4 Correct)</h3>
+                <h3 className="text-xl font-bold text-white">Check Passed ({correctAnswersCount}/{totalQuestions} Correct)</h3>
                 <p className="text-xs text-slate-300 mt-1 font-semibold">
                   You demonstrated solid operational grasp. You can skip the intro cards!
                 </p>
@@ -108,7 +150,7 @@ export default function ExperiencedCheckModal({
                   "Don't guess. Stop. Check. Act correctly."
                 </p>
                 <p className="text-[11px] text-slate-300 font-semibold">
-                  Never grab stock before scanning the bin barcode. Always report shelf shortages immediately.
+                  Never operate without verifying mandatory safety and compliance controls. Follow written SOP rules at all times.
                 </p>
               </div>
 
@@ -129,7 +171,7 @@ export default function ExperiencedCheckModal({
                 <AlertTriangle size={30} />
               </div>
               <div>
-                <h3 className="text-xl font-bold text-white">Review Recommended ({correctCount}/4)</h3>
+                <h3 className="text-xl font-bold text-white">Review Recommended ({correctAnswersCount}/{totalQuestions})</h3>
                 <p className="text-xs text-slate-300 mt-1 font-semibold leading-relaxed">
                   A quick walk through the presentation cards in <b>Training deck</b> will refresh the exact procedure for this SOP.
                 </p>
@@ -183,8 +225,8 @@ export default function ExperiencedCheckModal({
         {/* Options */}
         <div className="space-y-2.5">
           {currentQ.options.map((opt) => {
-            const isSelected = selectedOptionId === opt.id;
-            const revealed = selectedOptionId !== null;
+            const isSelected = currentSelection?.optionId === opt.id;
+            const revealed = currentSelection !== undefined;
 
             return (
               <button
@@ -213,7 +255,7 @@ export default function ExperiencedCheckModal({
         </div>
 
         {/* Feedback Rationale if revealed */}
-        {selectedOptionId && (
+        {currentSelection && (
           <div className="p-3 bg-white/5 rounded-xl border border-white/10 text-xs text-slate-300 font-medium animate-in fade-in">
             {currentQ.explanation}
           </div>
@@ -234,9 +276,9 @@ export default function ExperiencedCheckModal({
 
           <button
             onClick={handleNext}
-            disabled={!selectedOptionId}
+            disabled={!currentSelection}
             className={`h-12 px-6 rounded-full font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
-              selectedOptionId
+              currentSelection
                 ? 'bg-white text-slate-950 shadow-lg active:scale-95 hover:bg-slate-100'
                 : 'bg-white/10 text-slate-500 cursor-not-allowed'
             }`}

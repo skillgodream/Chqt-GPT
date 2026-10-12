@@ -11,6 +11,7 @@ interface HomeScreenProps {
   onSelectSop: (lessonId: string, title?: string) => void;
   onExploreLibrary: () => void;
   onOpenPassport: () => void;
+  onOpenPilotDashboard?: () => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
@@ -20,6 +21,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onSelectSop,
   onExploreLibrary,
   onOpenPassport,
+  onOpenPilotDashboard,
 }) => {
   return (
     <div className="flex-1 flex flex-col px-4 pt-4 pb-28 space-y-5 max-w-lg mx-auto w-full animate-in fade-in duration-200">
@@ -157,7 +159,31 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       </div>
 
-      {/* 4. Process Passport Review Banner */}
+      {/* 4. Pilot Evidence Dashboard Banner */}
+      {onOpenPilotDashboard && (
+        <div
+          onClick={() => {
+            sounds.playTap();
+            onOpenPilotDashboard();
+          }}
+          className="p-5 bg-gradient-to-r from-[#0F1428] via-[#121832] to-[#0A0D1F] rounded-[22px] border border-indigo-500/30 flex items-center justify-between cursor-pointer hover:border-indigo-400 transition-all duration-200 shadow-xl text-left"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-500 text-slate-950 flex items-center justify-center font-black shrink-0 shadow-lg">
+              <ShieldCheck size={20} />
+            </div>
+            <div>
+              <h4 className="text-sm font-extrabold text-white">Pilot Evidence Dashboard</h4>
+              <p className="text-xs text-indigo-200 mt-0.5">Track frontline readiness & supervisor sign-offs</p>
+            </div>
+          </div>
+          <span className="text-xs font-mono font-bold text-indigo-400 uppercase tracking-wider underline">
+            View Dashboard
+          </span>
+        </div>
+      )}
+
+      {/* 5. Process Passport Review Banner */}
       <div
         onClick={() => {
           sounds.playTap();

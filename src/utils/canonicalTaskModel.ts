@@ -155,8 +155,8 @@ export function buildCanonicalTaskModel(
     blueprint?.document_identity?.version || (lesson as any)?.sourceMeta?.version,
     '1.0'
   );
-  const role = clean(blueprint?.role || lesson?.role, 'Workplace Operator');
-  const process = clean(blueprint?.process || lesson?.topic || lesson?.title, docTitle);
+  const role = clean(blueprint?.role || (lesson as any)?.role, 'Workplace Operator');
+  const process = clean(blueprint?.process || (lesson as any)?.topic || lesson?.title, docTitle);
   const purpose = clean(
     blueprint?.purpose || lesson?.description,
     `Standard operational execution guidelines for ${process}.`
@@ -166,26 +166,26 @@ export function buildCanonicalTaskModel(
   // 1. Prerequisites
   const prerequisites: CanonicalPrerequisite[] = (blueprint?.prerequisites || []).map((p, idx) => ({
     id: `prereq-${idx + 1}`,
-    text: clean(p.text, 'Check workstation prerequisites.'),
+    text: clean(p.text),
     source: {
       pageOrSection: p.source_ref || 'Prerequisites',
       sourceRef: p.source_ref || 'SOP Section 1',
       sourceText: clean(p.source_text || p.text),
     },
-  }));
+  })).filter((p) => p.text.length > 0);
 
   // 2. Tools & Systems
   const toolsAndSystems: CanonicalToolOrSystem[] = (blueprint?.tools_and_systems || []).map((t, idx) => ({
     id: `tool-${idx + 1}`,
-    name: clean(t.name, 'Equipment / Tool'),
-    purpose: clean(t.purpose, 'Required for operational step execution.'),
+    name: clean(t.name),
+    purpose: clean(t.purpose),
     neverDo: t.never_do ? clean(t.never_do) : undefined,
     source: {
       pageOrSection: t.source_ref || 'Tools & Equipment',
       sourceRef: t.source_ref || 'SOP Section 2',
       sourceText: clean(t.source_text || t.name),
     },
-  }));
+  })).filter((t) => t.name.length > 0);
 
   // 3. Operational Steps
   const rawOpSteps = blueprint?.operational_steps || [];
@@ -194,8 +194,8 @@ export function buildCanonicalTaskModel(
         id: `step-${idx + 1}`,
         stepNumber: idx + 1,
         title: clean(s.task_title || s.instruction.slice(0, 50), `Step ${idx + 1}`),
-        instruction: clean(s.instruction, `Execute step ${idx + 1}.`),
-        category: s.category || 'DO',
+        instruction: clean(s.instruction),
+        category: ((s.category as any) || 'DO') as CanonicalStep['category'],
         actionVerb: s.action_verb || clean(s.instruction.split(' ')[0], 'Execute'),
         whyItMatters: s.why_it_matters ? clean(s.why_it_matters) : undefined,
         criticalControl: Boolean(s.critical_control),
@@ -208,13 +208,13 @@ export function buildCanonicalTaskModel(
           sourceRef: s.source?.source_ref || `SOP Step ${idx + 1}`,
           sourceText: clean(s.source?.source_text || s.instruction),
         },
-      }))
+      })).filter((s) => s.instruction.length > 0)
     : (lesson?.stepObjects || []).map((so: any, idx: number) => ({
         id: `step-${idx + 1}`,
         stepNumber: idx + 1,
         title: clean(so.title, `Step ${idx + 1}`),
-        instruction: clean(so.question || so.screen?.info || so.title, `Execute step ${idx + 1}.`),
-        category: 'DO',
+        instruction: clean(so.question || so.screen?.info || so.title),
+        category: 'DO' as CanonicalStep['category'],
         actionVerb: 'Execute',
         whyItMatters: so.why,
         coachTip: so.coach_say,
@@ -224,7 +224,7 @@ export function buildCanonicalTaskModel(
           sourceRef: `SOP Step ${idx + 1}`,
           sourceText: clean(so.title),
         },
-      }));
+      })).filter((s) => s.instruction.length > 0);
 
   // If still zero steps, parse lines from lesson content or raw text
   if (steps.length === 0 && (rawText || lesson?.description)) {
@@ -254,121 +254,135 @@ export function buildCanonicalTaskModel(
   // 4. Controls (Critical, Safety, Quality)
   const controls: CanonicalControlRule[] = [];
   (blueprint?.critical_controls || []).forEach((c, idx) => {
-    controls.push({
-      id: `ctrl-crit-${idx + 1}`,
-      rule: clean(c.rule),
-      rationale: clean(c.rationale, 'Critical compliance rule.'),
-      type: 'compliance',
-      isCritical: true,
-      source: {
-        pageOrSection: c.source_ref || 'Critical Controls',
-        sourceRef: c.source_ref || 'SOP Controls',
-        sourceText: clean(c.source_text || c.rule),
-      },
-    });
-  });
-
-  (blueprint?.safety_rules || []).forEach((s, idx) => {
-    controls.push({
-      id: `ctrl-safe-${idx + 1}`,
-      rule: clean(s.rule),
-      type: 'safety',
-      isCritical: true,
-      source: {
-        pageOrSection: s.source_ref || 'Safety Rules',
-        sourceRef: s.source_ref || 'SOP Safety',
-        sourceText: clean(s.source_text || s.rule),
-      },
-    });
-  });
-
-  (blueprint?.quality_rules || []).forEach((q, idx) => {
-    controls.push({
-      id: `ctrl-qual-${idx + 1}`,
-      rule: clean(q.rule),
-      type: 'quality',
-      isCritical: false,
-      source: {
-        pageOrSection: q.source_ref || 'Quality Rules',
-        sourceRef: q.source_ref || 'SOP Quality',
-        sourceText: clean(q.source_text || q.rule),
-      },
-    });
-  });
-
-  // Fallback controls from lesson if blueprint was empty
-  if (controls.length === 0 && (lesson?.criticalControls || []).length > 0) {
-    lesson!.criticalControls.forEach((cc, idx) => {
+    if (c.rule) {
       controls.push({
-        id: `ctrl-fallback-${idx + 1}`,
-        rule: clean(cc),
+        id: `ctrl-crit-${idx + 1}`,
+        rule: clean(c.rule),
+        rationale: c.rationale ? clean(c.rationale) : undefined,
         type: 'compliance',
         isCritical: true,
         source: {
-          pageOrSection: 'Critical Controls',
-          sourceRef: 'SOP Controls',
-          sourceText: clean(cc),
+          pageOrSection: c.source_ref || 'Critical Controls',
+          sourceRef: c.source_ref || 'SOP Controls',
+          sourceText: clean(c.source_text || c.rule),
         },
       });
-    });
-  }
+    }
+  });
+
+  (blueprint?.safety_rules || []).forEach((s, idx) => {
+    if (s.rule) {
+      controls.push({
+        id: `ctrl-safe-${idx + 1}`,
+        rule: clean(s.rule),
+        type: 'safety',
+        isCritical: true,
+        source: {
+          pageOrSection: s.source_ref || 'Safety Rules',
+          sourceRef: s.source_ref || 'SOP Safety',
+          sourceText: clean(s.source_text || s.rule),
+        },
+      });
+    }
+  });
+
+  (blueprint?.quality_rules || []).forEach((q, idx) => {
+    if (q.rule) {
+      controls.push({
+        id: `ctrl-qual-${idx + 1}`,
+        rule: clean(q.rule),
+        type: 'quality',
+        isCritical: false,
+        source: {
+          pageOrSection: q.source_ref || 'Quality Rules',
+          sourceRef: q.source_ref || 'SOP Quality',
+          sourceText: clean(q.source_text || q.rule),
+        },
+      });
+    }
+  });
 
   // 5. Decisions
-  const decisions: CanonicalDecisionPoint[] = (blueprint?.decision_points || []).map((d, idx) => ({
-    id: `dec-${idx + 1}`,
-    situation: clean(d.situation, 'Operational decision required.'),
-    condition: clean(d.decision || d.situation),
-    compliantAction: clean(d.action, 'Follow standard escalation or verification.'),
-    rationale: clean(d.source_text || d.action),
-    source: {
-      pageOrSection: d.source_ref || 'Decision Points',
-      sourceRef: d.source_ref || 'SOP Decisions',
-      sourceText: clean(d.source_text || d.situation),
-    },
-  }));
+  const decisions: CanonicalDecisionPoint[] = (blueprint?.decision_points || [])
+    .filter((d) => d.situation && d.action)
+    .map((d, idx) => ({
+      id: `dec-${idx + 1}`,
+      situation: clean(d.situation),
+      condition: clean(d.decision || d.situation),
+      compliantAction: clean(d.action),
+      rationale: clean(d.source_text || d.action),
+      source: {
+        pageOrSection: d.source_ref || 'Decision Points',
+        sourceRef: d.source_ref || 'SOP Decisions',
+        sourceText: clean(d.source_text || d.situation),
+      },
+    }));
 
   // 6. Exceptions & Escalations
   const exceptionsAndEscalations: CanonicalExceptionRule[] = [];
   (blueprint?.exceptions || []).forEach((e, idx) => {
-    exceptionsAndEscalations.push({
-      id: `exc-${idx + 1}`,
-      type: 'exception',
-      trigger: clean(e.trigger, 'Process anomaly or deviation.'),
-      resolutionOrAction: clean(e.resolution, 'Execute recovery or verification procedure.'),
-      source: {
-        pageOrSection: e.source_ref || 'Exceptions',
-        sourceRef: e.source_ref || 'SOP Exceptions',
-        sourceText: clean(e.source_text || e.trigger),
-      },
-    });
+    if (e.trigger && e.resolution) {
+      exceptionsAndEscalations.push({
+        id: `exc-${idx + 1}`,
+        type: 'exception',
+        trigger: clean(e.trigger),
+        resolutionOrAction: clean(e.resolution),
+        source: {
+          pageOrSection: e.source_ref || 'Exceptions',
+          sourceRef: e.source_ref || 'SOP Exceptions',
+          sourceText: clean(e.source_text || e.trigger),
+        },
+      });
+    }
   });
 
   (blueprint?.escalations || []).forEach((esc, idx) => {
-    exceptionsAndEscalations.push({
-      id: `escala-${idx + 1}`,
-      type: 'escalation',
-      trigger: clean(esc.situation, 'Unresolved issue requiring supervisor intervention.'),
-      resolutionOrAction: clean(esc.contact_or_action, 'Contact team lead or supervisor.'),
-      target: clean(esc.contact_or_action),
-      source: {
-        pageOrSection: esc.source_ref || 'Escalations',
-        sourceRef: esc.source_ref || 'SOP Escalations',
-        sourceText: clean(esc.source_text || esc.situation),
-      },
-    });
+    if (esc.situation && esc.contact_or_action) {
+      exceptionsAndEscalations.push({
+        id: `escala-${idx + 1}`,
+        type: 'escalation',
+        trigger: clean(esc.situation),
+        resolutionOrAction: clean(esc.contact_or_action),
+        target: clean(esc.contact_or_action),
+        source: {
+          pageOrSection: esc.source_ref || 'Escalations',
+          sourceRef: esc.source_ref || 'SOP Escalations',
+          sourceText: clean(esc.source_text || esc.situation),
+        },
+      });
+    }
   });
 
   // 7. Prohibited Actions / Mistakes
-  const prohibitedActions: CanonicalProhibitedAction[] = (blueprint?.common_mistakes || []).map((m, idx) => ({
-    id: `prohib-${idx + 1}`,
-    mistake: clean(m.mistake, 'Prohibited action or common mistake.'),
-    prevention: clean(m.prevention, 'Follow mandatory SOP requirement.'),
-    source: {
-      pageOrSection: m.source_ref || 'Prohibited Actions',
-      sourceRef: m.source_ref || 'SOP Prohibited Actions',
-      sourceText: clean(m.source_text || m.mistake),
-    },
-  }));
+  const prohibitedActions: CanonicalProhibitedAction[] = (blueprint?.common_mistakes || [])
+    .filter((m) => m.mistake)
+    .map((m, idx) => ({
+      id: `prohib-${idx + 1}`,
+      mistake: clean(m.mistake),
+      prevention: clean(m.prevention),
+      source: {
+        pageOrSection: m.source_ref || 'Prohibited Actions',
+        sourceRef: m.source_ref || 'SOP Prohibited Actions',
+        sourceText: clean(m.source_text || m.mistake),
+      },
+    }));
+
+  const ambiguities: { topic: string; description: string; sourceRef?: string }[] = [];
+  const escalationsPresent = exceptionsAndEscalations.some((e) => e.type === 'escalation');
+  if (!escalationsPresent) {
+    ambiguities.push({
+      topic: 'Escalations',
+      description: 'Source document contains no explicit escalation rule or supervisor contact path.',
+    });
+  }
+  if (prerequisites.length === 0) {
+    ambiguities.push({
+      topic: 'Prerequisites',
+      description: 'Source document specifies no explicit prerequisites or pre-entry qualifications.',
+    });
+  }
+
+  const confidence = Math.max(0.5, 1.0 - ambiguities.length * 0.15);
 
   return {
     id: lesson?.id || `task-model-${Date.now()}`,
@@ -391,8 +405,8 @@ export function buildCanonicalTaskModel(
     prohibitedActions,
     rawText: rawText || (lesson as any)?.sourceMeta?.rawText,
     sourceMeta: (lesson as any)?.sourceMeta,
-    confidence: blueprint?.confidence || 0.95,
-    ambiguities: [],
+    confidence,
+    ambiguities,
   };
 }
 
@@ -465,12 +479,20 @@ export function auditTaskModelCoverage(
   taskModel.exceptionsAndEscalations.forEach((e) => addRecord(e.id, 'exception_escalation', e.trigger, e.source.sourceRef));
   taskModel.prohibitedActions.forEach((p) => addRecord(p.id, 'prohibited_action', p.mistake, p.source.sourceRef));
 
+  (taskModel.ambiguities || []).forEach((amb, idx) => {
+    unresolvedItems.push({
+      itemId: `ambiguity-${idx + 1}`,
+      description: amb.topic,
+      reason: amb.description,
+    });
+  });
+
   const totalRequirements = records.length;
   const coveredRequirements = records.filter((r) => !r.dispositions.has('flagged_for_review')).length;
   const coveragePercentage = totalRequirements > 0 ? Math.round((coveredRequirements / totalRequirements) * 100) : 100;
 
   return {
-    isFullyCovered: unresolvedItems.length === 0,
+    isFullyCovered: unresolvedItems.length === 0 && (taskModel.ambiguities || []).length === 0 && taskModel.confidence >= 0.90,
     totalRequirements,
     coveredRequirements,
     coveragePercentage,

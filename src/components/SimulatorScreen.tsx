@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { Check, X, Sparkles, BookOpen } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Check, X, Sparkles, BookOpen, ShieldCheck, RefreshCw } from 'lucide-react';
 import { SIMULATION_STEPS, SIMULATION_STEPS_B } from '../data/lessonsData';
 import { SimulatorStep, Lesson, SourceMeta } from '../types';
 import AskTrainerModal from './AskTrainerModal';
 import MicroLessonSheet from './MicroLessonSheet';
+import CapabilityDecisionModal from './CapabilityDecisionModal';
+import { buildCanonicalTaskModel } from '../utils/canonicalTaskModel';
+import { evaluateCapabilityDecision } from '../utils/capabilityDecisionEngine';
 import { sounds } from '../utils/audio';
 import { ORG_CONFIG } from '../config/orgConfig';
 import { findBestVisualMatch } from '../utils/visualLibraryMatcher';
@@ -49,18 +52,26 @@ export default function SimulatorScreen({
           targetCode: `STEP-${idx + 1}`,
           targetQty: 1,
           sku: `SOP-${idx + 1}`,
-          choices: (so.options && so.options.length >= 2)
-            ? so.options.map((opt: any, oIdx: number) => ({
+          choices: (() => {
+            if (!so.options || so.options.length < 2) {
+              return [];
+            }
+            const hasExplicitMatch = so.options.some((opt: any) => (so.correct && opt.id === so.correct) || opt.isCorrect === true);
+            if (!hasExplicitMatch) {
+              return so.options.map((opt: any, oIdx: number) => ({
                 id: opt.id || `c${oIdx + 1}`,
                 title: opt.label || opt.text,
-                subtitle: oIdx === 0 ? 'Compliant SOP Standard' : 'Non-compliant Action',
-                isCorrect: opt.id === so.correct || oIdx === 0,
-              }))
-            : [
-                { id: 'c1', title: so.title || 'Execute compliant SOP step', subtitle: `${lesson.title} Standard Procedure`, isCorrect: true },
-                { id: 'c2', title: `Skip step ${idx + 1} to save time`, subtitle: 'Non-compliant Shortcut', isCorrect: false },
-                { id: 'c3', title: `Bypass verification check`, subtitle: 'Unapproved Workaround', isCorrect: false },
-              ],
+                subtitle: 'Unvalidated option',
+                isCorrect: false,
+              }));
+            }
+            return so.options.map((opt: any, oIdx: number) => ({
+              id: opt.id || `c${oIdx + 1}`,
+              title: opt.label || opt.text,
+              subtitle: (opt.id === so.correct || opt.isCorrect) ? 'Compliant SOP Standard' : 'Non-compliant Action',
+              isCorrect: Boolean((so.correct && opt.id === so.correct) || opt.isCorrect === true),
+            }));
+          })(),
           why: so.why || 'Follow standard operating procedure guidelines.',
           coachTip: so.coach_say || 'Verify required criteria before proceeding.',
           hint: so.hint || `Refer to ${lesson.title} written SOP`,
@@ -90,11 +101,50 @@ export default function SimulatorScreen({
   const [isBubbleBad, setIsBubbleBad] = useState<boolean>(false);
   
 
-  // Modals inside simulator
   const [isTrainerModalOpen, setIsTrainerModalOpen] = useState(false);
   const [isMicroLessonOpen, setIsMicroLessonOpen] = useState(false);
+  const [isCapabilityModalOpen, setIsCapabilityModalOpen] = useState(false);
 
   const [activeStepPool, setActiveStepPool] = useState<SimulatorStep[]>(derivedSteps);
+
+  const ctm = useMemo(() => {
+    if (!lesson) return null;
+    return buildCanonicalTaskModel(lesson.operationalBlueprint, lesson, lesson.sourceMeta?.rawText);
+  }, [lesson]);
+
+  const capabilityDecisionResult = useMemo(() => {
+    if (!ctm) return null;
+    const demonstratedIds: string[] = [];
+    const failedIds: string[] = [];
+
+    activeStepPool.forEach((stepItem, idx) => {
+      const stepId = `step-${stepItem.id || idx + 1}`;
+      if (missedSteps.includes(idx)) {
+        failedIds.push(stepId);
+      } else {
+        demonstratedIds.push(stepId);
+      }
+    });
+
+    return evaluateCapabilityDecision(ctm, {
+      completedModes: new Set([phase === 0 ? 'seeTheAction' : phase === 1 ? 'makeTheDecision' : 'proveCapability']),
+      demonstratedRequirementIds: demonstratedIds,
+      failedRequirementIds: failedIds,
+    });
+  }, [ctm, activeStepPool, missedSteps, phase]);
+
+  const handleTargetedRemediation = () => {
+    sounds.playTap();
+    const missedStepItems = activeStepPool.filter((_, idx) => missedSteps.includes(idx));
+    if (missedStepItems.length > 0) {
+      setActiveStepPool(missedStepItems);
+      setStepIndex(0);
+      setScore(0);
+      setMissedSteps([]);
+      setIsCompleted(false);
+      setPhase(1); // Return to Guide Me with ONLY weak steps
+    }
+  };
 
   useEffect(() => {
     setActiveStepPool(derivedSteps);
@@ -382,7 +432,25 @@ export default function SimulatorScreen({
             </div>
 
             {/* Actions */}
-            <div className="introActions">
+            <div className="introActions flex-col gap-2">
+              {missedSteps.length > 0 && (
+                <button className="primary font-bold bg-amber-400 hover:bg-amber-300 text-slate-950 flex items-center justify-center gap-2" onClick={handleTargetedRemediation}>
+                  <RefreshCw size={16} /> Practise {missedStepItems.length} Weak Item{missedStepItems.length > 1 ? 's' : ''} Only →
+                </button>
+              )}
+
+              {capabilityDecisionResult && (
+                <button
+                  className="secondary font-bold flex items-center justify-center gap-2 text-indigo-300 border-indigo-500/30 hover:bg-indigo-950/40"
+                  onClick={() => {
+                    sounds.playTap();
+                    setIsCapabilityModalOpen(true);
+                  }}
+                >
+                  <ShieldCheck size={16} className="text-emerald-400" /> View Capability Decision & Evidence Matrix
+                </button>
+              )}
+
               {phase === 0 ? (
                 <button className="primary" onClick={() => handleRestartFull(1)}>
                   Continue to Guide Me →
@@ -393,11 +461,11 @@ export default function SimulatorScreen({
                 </button>
               ) : (
                 <button className="secondary" onClick={() => handleRestartFull(1)}>
-                  Run again
+                  Run full simulation again
                 </button>
               )}
               <button
-                className={phase === 0 ? 'secondary' : 'primary'}
+                className="secondary"
                 onClick={() => {
                   sounds.playTap();
                   onClose();
@@ -407,6 +475,19 @@ export default function SimulatorScreen({
               </button>
             </div>
           </main>
+
+          {/* Capability Decision Modal */}
+          <CapabilityDecisionModal
+            isOpen={isCapabilityModalOpen}
+            result={capabilityDecisionResult}
+            sopTitle={lesson?.title || 'SOP'}
+            onClose={() => setIsCapabilityModalOpen(false)}
+            onStartTargetedRemediation={(plan) => {
+              setIsCapabilityModalOpen(false);
+              handleTargetedRemediation();
+            }}
+            onAskTrainer={onAskTrainer}
+          />
         </div>
       </div>
     );
@@ -544,48 +625,55 @@ export default function SimulatorScreen({
             <h3 className="question">{typedQuestion}</h3>
 
             {/* Choices Grid */}
-            <div className="choices">
-              {step.choices.map((choice, index) => {
-                const isSelected = selectedChoiceId === choice.id;
-                const isDisabled = disabledChoiceIds.includes(choice.id);
+            {(!step?.choices || step.choices.length < 2 || !step.choices.some((c) => c.isCorrect)) ? (
+              <div className="p-4 bg-red-950/80 border border-red-500/50 rounded-2xl text-red-200 text-xs font-bold space-y-1 my-2">
+                <div className="font-extrabold uppercase tracking-wider text-red-400">Step Validation Error</div>
+                <div>The answer key for this operational step is missing or invalid in the SOP model. Cannot substitute an unverified answer.</div>
+              </div>
+            ) : (
+              <div className="choices">
+                {step.choices.map((choice, index) => {
+                  const isSelected = selectedChoiceId === choice.id;
+                  const isDisabled = disabledChoiceIds.includes(choice.id);
 
-                let choiceStateClass = '';
-                if (isSelected) {
-                  choiceStateClass = choice.isCorrect ? 'correct' : 'wrong';
-                } else if (isDisabled) {
-                  choiceStateClass = 'disabled';
-                }
+                  let choiceStateClass = '';
+                  if (isSelected) {
+                    choiceStateClass = choice.isCorrect ? 'correct' : 'wrong';
+                  } else if (isDisabled) {
+                    choiceStateClass = 'disabled';
+                  }
 
-                return (
-                  <button
-                    key={choice.id}
-                    style={{
-                      animation: "fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards",
-                      animationDelay: `${index * 120}ms`,
-                      opacity: 0
-                    }}
-                    className={`choice ${choiceStateClass}`.trim()}
-                    onClick={() => handleChoiceClick(choice.id, choice.isCorrect)}
-                    disabled={
-                      phase === 0 ||
-                      isDisabled ||
-                      (selectedChoiceId !== null && phase === 2)
-                    }
-                  >
-                    <div>
-                      <strong>{choice.title}</strong>
-                      {choice.subtitle && <small>{choice.subtitle}</small>}
-                    </div>
+                  return (
+                    <button
+                      key={choice.id}
+                      style={{
+                        animation: "fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                        animationDelay: `${index * 120}ms`,
+                        opacity: 0
+                      }}
+                      className={`choice ${choiceStateClass}`.trim()}
+                      onClick={() => handleChoiceClick(choice.id, choice.isCorrect)}
+                      disabled={
+                        phase === 0 ||
+                        isDisabled ||
+                        (selectedChoiceId !== null && phase === 2)
+                      }
+                    >
+                      <div>
+                        <strong>{choice.title}</strong>
+                        {choice.subtitle && <small>{choice.subtitle}</small>}
+                      </div>
 
-                    {isSelected && (
-                      <span className="mark">
-                        {choice.isCorrect ? '✓' : '×'}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+                      {isSelected && (
+                        <span className="mark">
+                          {choice.isCorrect ? '✓' : '×'}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Guruji Coaching Bubble */}
             <div className="guru" id="guru">

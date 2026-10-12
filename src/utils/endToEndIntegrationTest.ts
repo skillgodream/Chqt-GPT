@@ -9,7 +9,7 @@ import { planKnowItSlides } from '../experiment/knowItPlanner';
 import { planVideoDemonstration, validateVideoPlan } from './videoPlanEngine';
 
 console.log('================================================================');
-console.log('GURUJI END-TO-END RUNTIME PIPELINE VERIFICATION — REAL NON-FIXTURE SOP');
+console.log('GURUJI PIPELINE MODEL INTEGRATION TEST (GENERATED MODEL ASSERTER)');
 console.log('================================================================\n');
 
 // 1. NON-FIXTURE TEST SOP
@@ -98,30 +98,96 @@ const videoValidation = validateVideoPlan(videoPlan, lesson.operationalBlueprint
 console.log('  ✓ Video Plan Validation Status:', videoPlan.validation_status);
 console.log('  ✓ Is Valid:', videoValidation.isValid);
 
-// Gather covered IDs from actual generated outputs
-const learnCoveredIds = [
-  ...ctm.steps.map((s) => s.id),
-  ...ctm.prerequisites.map((p) => p.id),
-  ...ctm.toolsAndSystems.map((t) => t.id),
-  ...ctm.controls.map((c) => c.id),
-  ...ctm.decisions.map((d) => d.id),
-  ...ctm.exceptionsAndEscalations.map((e) => e.id),
-  ...ctm.prohibitedActions.map((p) => p.id),
-];
+function norm(str: string): string {
+  return (str || '')
+    .toLowerCase()
+    .replace(/^when executing:\s*/i, '')
+    .replace(/^quality or compliance anomaly:\_*/i, '')
+    .replace(/^unresolved issue or anomaly during\s*/i, '')
+    .replace(/^[\d\.\-\*\•\:]\s*/, '')
+    .replace(/[^a-z0-9]/g, '');
+}
 
-const seeCoveredIds = (videoPlan.coverage_ledger || []).map((i) => i.item_id);
+// Gather covered IDs by asserting against actual generated output models
+const allSlideText = norm(teachMePlan.slides.map((s) => `${s.title} ${(s as any).text || ''} ${(s as any).bullets?.join(' ') || ''}`).join(' '));
+const learnCoveredIds: string[] = [];
 
-const makeCoveredIds = [
-  ...simulatorSteps.map((_, idx) => `step-${idx + 1}`),
-  ...ctm.decisions.map((d) => d.id),
-  ...ctm.exceptionsAndEscalations.map((e) => e.id),
-];
+ctm.steps.forEach((s) => {
+  const target = norm(s.instruction).slice(0, 20);
+  if (target && allSlideText.includes(target)) learnCoveredIds.push(s.id);
+});
+ctm.prerequisites.forEach((p) => {
+  const target = norm(p.text).slice(0, 20);
+  if (target && allSlideText.includes(target)) learnCoveredIds.push(p.id);
+});
+ctm.toolsAndSystems.forEach((t) => {
+  const target = norm(t.name).slice(0, 15);
+  if (target && allSlideText.includes(target)) learnCoveredIds.push(t.id);
+});
+ctm.controls.forEach((c) => {
+  const target = norm(c.rule).slice(0, 20);
+  if (target && allSlideText.includes(target)) learnCoveredIds.push(c.id);
+});
+ctm.decisions.forEach((d) => {
+  const t1 = norm(d.situation).slice(0, 15);
+  const t2 = norm(d.compliantAction).slice(0, 15);
+  if ((t1 && allSlideText.includes(t1)) || (t2 && allSlideText.includes(t2))) learnCoveredIds.push(d.id);
+});
+ctm.exceptionsAndEscalations.forEach((e) => {
+  const t1 = norm(e.trigger).slice(0, 15);
+  const t2 = norm(e.resolutionOrAction).slice(0, 15);
+  if ((t1 && allSlideText.includes(t1)) || (t2 && allSlideText.includes(t2))) learnCoveredIds.push(e.id);
+});
+ctm.prohibitedActions.forEach((p) => {
+  const target = norm(p.mistake).slice(0, 20);
+  if (target && allSlideText.includes(target)) learnCoveredIds.push(p.id);
+});
 
-const proveCoveredIds = [
-  ...ctm.steps.map((s) => s.id),
-  ...ctm.controls.map((c) => c.id),
-  ...ctm.prohibitedActions.map((p) => p.id),
-];
+// See: Assert against actual video plan clips and coverage ledger
+const allClipText = norm(videoPlan.clips.map((c) => `${c.title} ${(c as any).action_description || (c as any).action || ''} ${(c as any).assigned_step_id || ''}`).join(' '));
+const ledgerIds = new Set((videoPlan.coverage_ledger || []).map((l) => l.item_id));
+const seeCoveredIds: string[] = [];
+
+ctm.steps.forEach((s) => {
+  if (ledgerIds.has(s.id) || allClipText.includes(norm(s.id)) || allClipText.includes(norm(s.instruction).slice(0, 15))) {
+    seeCoveredIds.push(s.id);
+  }
+});
+ctm.controls.forEach((c) => {
+  if (ledgerIds.has(c.id) || allClipText.includes(norm(c.rule).slice(0, 15))) {
+    seeCoveredIds.push(c.id);
+  }
+});
+
+// Make: Assert against actual simulator steps
+const allSimText = norm(simulatorSteps.map((s: any) => `${s.question || ''} ${s.taskItem || ''} ${s.why || ''}`).join(' '));
+const makeCoveredIds: string[] = [];
+ctm.steps.forEach((s) => {
+  if (allSimText.includes(norm(s.instruction).slice(0, 15))) makeCoveredIds.push(s.id);
+});
+ctm.decisions.forEach((d) => {
+  const t1 = norm(d.situation).slice(0, 15);
+  const t2 = norm(d.compliantAction).slice(0, 15);
+  if ((t1 && allSimText.includes(t1)) || (t2 && allSimText.includes(t2))) makeCoveredIds.push(d.id);
+});
+ctm.exceptionsAndEscalations.forEach((e) => {
+  const t1 = norm(e.trigger).slice(0, 15);
+  const t2 = norm(e.resolutionOrAction).slice(0, 15);
+  if ((t1 && allSimText.includes(t1)) || (t2 && allSimText.includes(t2))) makeCoveredIds.push(e.id);
+});
+
+// Prove: Assert against actual assessment questions
+const allTestText = norm((assessmentQuestions || []).map((q: any) => `${q.title || ''} ${q.question || ''} ${q.situation || ''}`).join(' '));
+const proveCoveredIds: string[] = [];
+ctm.steps.forEach((s) => {
+  if (allTestText.includes(norm(s.instruction).slice(0, 15)) || allSimText.includes(norm(s.instruction).slice(0, 15))) proveCoveredIds.push(s.id);
+});
+ctm.controls.forEach((c) => {
+  if (allTestText.includes(norm(c.rule).slice(0, 15)) || allSimText.includes(norm(c.rule).slice(0, 15))) proveCoveredIds.push(c.id);
+});
+ctm.prohibitedActions.forEach((p) => {
+  if (allTestText.includes(norm(p.mistake).slice(0, 15)) || allSimText.includes(norm(p.mistake).slice(0, 15))) proveCoveredIds.push(p.id);
+});
 
 const auditReport = auditTaskModelCoverage(ctm, {
   learnTheFlowCoveredIds: learnCoveredIds,
@@ -133,10 +199,30 @@ const auditReport = auditTaskModelCoverage(ctm, {
 console.log('  ✓ CTM Requirements Total:', auditReport.totalRequirements);
 console.log('  ✓ CTM Requirements Covered:', auditReport.coveredRequirements);
 console.log('  ✓ CTM Coverage Percentage:', auditReport.coveragePercentage + '%');
+if (auditReport.unresolvedItems.length > 0) {
+  console.log('  Unresolved items detail:', auditReport.unresolvedItems);
+}
 
-if (auditReport.isFullyCovered && videoValidation.isValid) {
+import { evaluateCapabilityDecision } from './capabilityDecisionEngine';
+
+const capabilityResult = evaluateCapabilityDecision(ctm, {
+  completedModes: new Set(['learnTheFlow', 'seeTheAction', 'makeTheDecision', 'proveCapability']),
+  demonstratedRequirementIds: ctm.steps.slice(0, 8).map((s) => s.id),
+  failedRequirementIds: ctm.steps.slice(8).map((s) => s.id),
+});
+
+console.log('\n5. EVALUATING CAPABILITY DECISION & TARGETED REMEDIATION...');
+console.log('  ✓ Decision Title:', capabilityResult.decisionTitle);
+console.log('  ✓ Decision Status:', capabilityResult.decision);
+console.log('  ✓ Demonstrated:', `${capabilityResult.demonstratedCount}/${capabilityResult.totalCount}`);
+console.log('  ✓ Weak Requirements Count:', capabilityResult.weakRequirements.length);
+if (capabilityResult.remediationPlan) {
+  console.log('  ✓ Targeted Remediation Plan:', capabilityResult.remediationPlan.buttonText);
+}
+
+if (auditReport.isFullyCovered && videoValidation.isValid && capabilityResult.remediationPlan !== null) {
   console.log('\n================================================================');
-  console.log('✅ END-TO-END PIPELINE VERIFICATION PASSED PERFECTLY (100% CTM COVERAGE)');
+  console.log('✅ END-TO-END PIPELINE & CAPABILITY DECISION VERIFICATION PASSED');
   console.log('================================================================');
 } else {
   console.error('\n❌ PIPELINE VERIFICATION FAILED');
